@@ -15,7 +15,8 @@
     "build": "npm --prefix web ci && npm --prefix web run build",
     "dev:web": "npm --prefix web run dev",
     "deploy:containers": "npm --prefix web run build && wrangler deploy -c wrangler.containers.jsonc",
-    "types": "wrangler types -c wrangler.containers.jsonc"
+    "types": "wrangler types -c wrangler.containers.jsonc",
+    "prepare": "[ -n \"$CI\" ] && npm run build || exit 0"
   },
   "repository": {
     "type": "git",
