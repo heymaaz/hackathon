@@ -85,10 +85,10 @@ app.get("/api/cuisines", async (c) => {
 app.get("/api/stats", async (c) => {
   const me = c.get("session").user.id;
   const r = await c.env.DB.prepare(
-    `SELECT COUNT(*) total, SUM(status='ready') ready, SUM(status IN ('needs_transcript','transcribing')) needs_transcript,
-       SUM(status='pending') pending, SUM(status='failed') failed, SUM(favorite) favorite, SUM(cooked) cooked,
-       SUM(requested_by IS NOT NULL AND cooked = 0) requests, SUM(requested_by IS NOT NULL AND requested_by != ? AND cooked = 0) requests_for_me,
-       SUM(saved_by = ?) mine, SUM(source='transcript') from_transcript
+    `SELECT COUNT(*) total, COALESCE(SUM(status='ready'),0) ready, COALESCE(SUM(status IN ('needs_transcript','transcribing')),0) needs_transcript,
+       COALESCE(SUM(status='pending'),0) pending, COALESCE(SUM(status='failed'),0) failed, COALESCE(SUM(favorite),0) favorite, COALESCE(SUM(cooked),0) cooked,
+       COALESCE(SUM(requested_by IS NOT NULL AND cooked = 0),0) requests, COALESCE(SUM(requested_by IS NOT NULL AND requested_by != ? AND cooked = 0),0) requests_for_me,
+       COALESCE(SUM(saved_by = ?),0) mine, COALESCE(SUM(source='transcript'),0) from_transcript
      FROM recipes`,
   )
     .bind(me, me)

@@ -7,16 +7,16 @@
  *   bun scripts/runner.ts --watch        # poll every 15s
  *   bun scripts/runner.ts <url> [...]    # save these links AND transcribe them right away
  *
- * Env: RECIPEBOX_URL (default http://localhost:8787), APP_KEY (optional)
+ * Env: RECIPEBOX_URL (default http://localhost:8787), RECIPEBOX_EMAIL, RECIPEBOX_PASSWORD (your app login)
  */
 import { $ } from "bun";
+import { signIn } from "./auth";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const BASE = (process.env.RECIPEBOX_URL ?? "http://localhost:8787").replace(/\/$/, "");
-const KEY = process.env.APP_KEY;
-const headers: Record<string, string> = KEY ? { "x-app-key": KEY } : {};
+const headers: Record<string, string> = await signIn(BASE);
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(BASE + path, { ...init, headers: { ...headers, ...(init?.headers as Record<string, string>) } });

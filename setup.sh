@@ -13,8 +13,11 @@ if grep -q REPLACE_ME wrangler.jsonc; then
 fi
 npx wrangler d1 migrations apply recipebox --local
 npx wrangler d1 migrations apply recipebox --remote
+# Push every non-empty secret from .dev.vars (BETTER_AUTH_URL is set to the workers.dev URL, not localhost)
 if [ -f .dev.vars ]; then
-  key=$(grep '^ANTHROPIC_API_KEY=' .dev.vars | cut -d= -f2-)
-  [ -n "$key" ] && printf '%s' "$key" | npx wrangler secret put ANTHROPIC_API_KEY
+  for name in BETTER_AUTH_SECRET OPENROUTER_API_KEY ANTHROPIC_API_KEY; do
+    val=$(grep "^$name=" .dev.vars | cut -d= -f2-)
+    [ -n "$val" ] && printf '%s' "$val" | npx wrangler secret put "$name"
+  done
 fi
 echo "Setup done. Deploy with: npm run deploy"
