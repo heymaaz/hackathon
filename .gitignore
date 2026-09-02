@@ -1,0 +1,7 @@
+node_modules
+.wrangler
+.dev.vars
+*.m4a
+.DS_Store
+web/dist
+worker-configuration.d.ts

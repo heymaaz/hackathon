@@ -1,0 +1,44 @@
+{
+  "name": "recipebox",
+  "version": "1.0.0",
+  "description": "UK's Shortest Hackathon 2026 (AI Tinkerers London) — solo build.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "wrangler dev",
+    "deploy": "npm --prefix web run build && wrangler deploy",
+    "typecheck": "tsc -p .",
+    "seed": "bun scripts/seed.ts",
+    "runner": "bun scripts/runner.ts --watch",
+    "migrate:local": "wrangler d1 migrations apply recipebox --local",
+    "migrate": "wrangler d1 migrations apply recipebox --remote",
+    "build": "npm --prefix web run build",
+    "dev:web": "npm --prefix web run dev"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/heymaaz/hackathon.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/heymaaz/hackathon/issues"
+  },
+  "homepage": "https://github.com/heymaaz/hackathon#readme",
+  "private": "true",
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260902.1",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.128.0"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.48",
+    "@openrouter/ai-sdk-provider": "^3.0.0",
+    "ai": "^7.0.90",
+    "better-auth": "^1.7.2",
+    "hono": "^4.13.5",
+    "zod": "^4.5.4"
+  }
+}
