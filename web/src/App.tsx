@@ -32,7 +32,10 @@ export function App() {
       else toast.add({ type: "error", title: "Could not reach the kitchen", description: (e as Error).message })
     }
   }, [])
-  useEffect(() => void refreshMe(), [refreshMe])
+  useEffect(() => {
+    const t = setTimeout(() => void refreshMe(), 0)
+    return () => clearTimeout(t)
+  }, [refreshMe])
 
   if (authState === "loading") {
     return (
@@ -76,13 +79,17 @@ function Kitchen({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
     setStats(st)
   }, [shelf, q])
 
+  const busy = items?.some((i) => i.status === "pending" || i.status === "transcribing") ?? false
   useEffect(() => {
-    load().catch(() => {})
-    const busy = items?.some((i) => i.status === "pending" || i.status === "transcribing")
-    const t = setInterval(() => load().catch(() => {}), busy ? 3000 : 10000)
-    return () => clearInterval(t)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [load, items?.some((i) => i.status === "pending" || i.status === "transcribing")])
+    // Poll faster while something is extracting or transcribing.
+    const tick = () => load().catch(() => {})
+    const first = setTimeout(tick, 0)
+    const every = setInterval(tick, busy ? 3000 : 10000)
+    return () => {
+      clearTimeout(first)
+      clearInterval(every)
+    }
+  }, [load, busy])
 
   const selected = useMemo(() => items?.find((i) => i.id === selectedId) ?? null, [items, selectedId])
 

@@ -4,7 +4,7 @@
   "description": "UK's Shortest Hackathon 2026 (AI Tinkerers London) — solo build.",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "vitest run",
     "dev": "wrangler dev",
     "deploy": "npm --prefix web run build && wrangler deploy",
     "typecheck": "tsc -p .",
@@ -35,6 +35,7 @@
     "@cloudflare/workers-types": "^5.20260902.1",
     "@types/bun": "^1.4.0",
     "typescript": "^7.0.2",
+    "vitest": "^4.1.11",
     "wrangler": "^4.128.0"
   },
   "dependencies": {

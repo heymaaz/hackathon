@@ -22,9 +22,13 @@ export function AuthPage({ onSignedIn }: { onSignedIn: () => void }) {
     const email = String(fd.get("email") ?? "")
     const password = String(fd.get("password") ?? "")
     const name = String(fd.get("name") ?? "")
+    const invite = String(fd.get("invite") ?? "")
     const res =
       mode === "sign-up"
-        ? await authClient.signUp.email({ name, email, password })
+        ? await authClient.signUp.email(
+            { name, email, password },
+            { headers: invite ? { "x-invite-code": invite } : undefined },
+          )
         : await authClient.signIn.email({ email, password })
     setPending(false)
     if (res.error) {
@@ -105,6 +109,13 @@ function AuthForm({
           {mode === "sign-up" && <FieldDescription>At least 8 characters.</FieldDescription>}
           {error && <FieldError>{error}</FieldError>}
         </Field>
+        {mode === "sign-up" && (
+          <Field>
+            <FieldLabel htmlFor="sign-up-invite">Invite code</FieldLabel>
+            <Input id="sign-up-invite" name="invite" placeholder="Leave empty if this kitchen is open" autoComplete="off" />
+            <FieldDescription>Whoever set up the box may have locked sign-up behind a code.</FieldDescription>
+          </Field>
+        )}
         <Button type="submit" disabled={pending} className="w-full">
           {pending && <Spinner data-icon="inline-start" />}
           {mode === "sign-up" ? "Create account" : "Sign in"}

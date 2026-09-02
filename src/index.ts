@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { auth, type Session } from "./auth";
 import { extractRecipe, fetchMeta, normalizeUrl, pickLlm, type Meta } from "./extract";
-import { downloadAudioInSandbox } from "./sandbox";
+import { downloadMediaInSandbox } from "./sandbox";
 
 export { Sandbox } from "./sandbox";
 
@@ -9,6 +9,13 @@ type Vars = { session: Session };
 const app = new Hono<{ Bindings: Env; Variables: Vars }>();
 
 // ---------- auth ----------
+// Optional household lock: when INVITE_CODE is set, sign-up must carry it.
+app.post("/api/auth/sign-up/email", async (c, next) => {
+  if (c.env.INVITE_CODE && c.req.header("x-invite-code") !== c.env.INVITE_CODE) {
+    return c.json({ code: "INVALID_INVITE_CODE", message: "That invite code is not right." }, 403);
+  }
+  await next();
+});
 app.all("/api/auth/*", (c) => auth.handler(c.req.raw));
 
 app.use("/api/*", async (c, next) => {
@@ -21,8 +28,9 @@ app.use("/api/*", async (c, next) => {
 
 app.get("/api/me", async (c) => {
   const s = c.get("session");
-  const { results: members } = await c.env.DB.prepare('SELECT id, name, email, image FROM "user" ORDER BY "createdAt"').all();
-  return c.json({ user: s.user, members });
+  // Members are exposed by id and name only; emails stay private to their owner.
+  const { results: members } = await c.env.DB.prepare('SELECT id, name, image FROM "user" ORDER BY "createdAt"').all();
+  return c.json({ user: s.user, members, inviteRequired: Boolean(c.env.INVITE_CODE) });
 });
 
 // ---------- helpers ----------
@@ -137,7 +145,31 @@ app.post("/api/recipes/:id/retry", async (c) => {
   return c.json({ ok: true });
 });
 
-/** Audio upload -> Workers AI Whisper -> re-extract with transcript. Body: raw audio bytes (local yt-dlp runner). */
+/**
+ * Media upload from the local runner: multipart with optional `audio` (m4a/mp3/wav) and up to 10 `frames` (jpeg).
+ * Whisper transcribes the audio, Claude re-reads the recipe with transcript + frames, and the card is filed.
+ */
+app.post("/api/recipes/:id/media", async (c) => {
+  const id = c.req.param("id");
+  const r = await c.env.DB.prepare("SELECT url FROM recipes WHERE id = ?").bind(id).first<{ url: string }>();
+  if (!r) return c.json({ error: "not found" }, 404);
+  const form = await c.req.formData();
+  const audioFile = form.get("audio");
+  const frameFiles = form.getAll("frames").filter((f): f is File => f instanceof File).slice(0, 10);
+  const audio = audioFile instanceof File && audioFile.size > 1000 ? bytesToBase64(new Uint8Array(await audioFile.arrayBuffer())) : null;
+  if (audioFile instanceof File && audioFile.size > 24 * 1024 * 1024) return c.json({ error: "audio too large (24MB max)" }, 413);
+  const frames: string[] = [];
+  for (const f of frameFiles) frames.push(bytesToBase64(new Uint8Array(await f.arrayBuffer())));
+  if (!audio && !frames.length) return c.json({ error: "send audio and/or frames" }, 400);
+  try {
+    const chars = await transcribeAndExtract(c.env, id, r.url, audio, frames);
+    return c.json({ transcript_chars: chars, recipe: await getRecipe(c.env.DB, id) });
+  } catch (e) {
+    return c.json({ error: String(e) }, 502);
+  }
+});
+
+/** Audio-only upload (raw bytes). Kept for simple clients; prefer /media. */
 app.post("/api/recipes/:id/audio", async (c) => {
   const id = c.req.param("id");
   const r = await c.env.DB.prepare("SELECT url FROM recipes WHERE id = ?").bind(id).first<{ url: string }>();
@@ -146,11 +178,24 @@ app.post("/api/recipes/:id/audio", async (c) => {
   if (buf.byteLength < 1000) return c.json({ error: "audio too small" }, 400);
   if (buf.byteLength > 24 * 1024 * 1024) return c.json({ error: "audio too large (24MB max)" }, 413);
   try {
-    const chars = await transcribeAndExtract(c.env, id, r.url, bytesToBase64(new Uint8Array(buf)));
+    const chars = await transcribeAndExtract(c.env, id, r.url, bytesToBase64(new Uint8Array(buf)), []);
     return c.json({ transcript_chars: chars, recipe: await getRecipe(c.env.DB, id) });
   } catch (e) {
     return c.json({ error: String(e) }, 502);
   }
+});
+
+/** The runner could not download the video. Keep the caption card if there is one, and stop re-queueing. */
+app.post("/api/recipes/:id/media-failed", async (c) => {
+  const id = c.req.param("id");
+  const body = await c.req.json<{ error?: string }>().catch(() => ({}) as { error?: string });
+  const r = await c.env.DB.prepare("SELECT ingredients FROM recipes WHERE id = ?").bind(id).first<{ ingredients: string | null }>();
+  if (!r) return c.json({ error: "not found" }, 404);
+  const hasCard = !!r.ingredients && r.ingredients !== "[]";
+  await c.env.DB.prepare("UPDATE recipes SET status = ?, transcript = COALESCE(transcript, ''), error = ?, updated_at = datetime('now') WHERE id = ?")
+    .bind(hasCard ? "ready" : "failed", `Video download failed, card is from the caption only: ${(body.error ?? "unknown").slice(0, 300)}`, id)
+    .run();
+  return c.json({ ok: true });
 });
 
 /** Cloud path: yt-dlp inside a Cloudflare Sandbox container -> Whisper -> Claude. Runs in the background. */
@@ -176,7 +221,7 @@ app.post("/api/queue/run", async (c) => {
 /** Recipes still waiting for audio (polled by the yt-dlp runner / Sandbox). Every recipe gets audio once. */
 app.get("/api/queue", async (c) => {
   const { results } = await c.env.DB.prepare(
-    "SELECT id, url, title, status FROM recipes WHERE transcript IS NULL AND status != 'transcribing' ORDER BY created_at ASC LIMIT 50",
+    "SELECT id, url, title, status FROM recipes WHERE (transcript IS NULL OR status = 'needs_transcript') AND status NOT IN ('transcribing','pending') ORDER BY created_at ASC LIMIT 50",
   ).all();
   return c.json(results);
 });
@@ -215,7 +260,7 @@ app.delete("/api/recipes/:id", async (c) => {
 });
 
 // ---------- pipeline ----------
-async function processRecipe(env: Env, id: string, url: string, transcript: string | null): Promise<void> {
+async function processRecipe(env: Env, id: string, url: string, transcript: string | null, frames: string[] = []): Promise<void> {
   try {
     const meta: Meta = await fetchMeta(url);
     await env.DB.prepare(
@@ -224,7 +269,8 @@ async function processRecipe(env: Env, id: string, url: string, transcript: stri
       .bind(meta.platform, meta.title, meta.creator, meta.thumbnail, meta.caption, id)
       .run();
 
-    if (!meta.caption && !transcript) {
+    const haveMedia = transcript !== null || frames.length > 0;
+    if (!meta.caption && !haveMedia) {
       await env.DB.prepare(
         "UPDATE recipes SET status = 'needs_transcript', title = COALESCE(title, ?), error = 'No caption; waiting for the audio transcript', updated_at = datetime('now') WHERE id = ?",
       )
@@ -233,8 +279,9 @@ async function processRecipe(env: Env, id: string, url: string, transcript: stri
       return;
     }
 
-    const recipe = await extractRecipe(pickLlm(env), meta, transcript);
-    const status = !recipe.is_recipe ? "failed" : transcript ? "ready" : recipe.needs_transcript ? "needs_transcript" : "ready";
+    const recipe = await extractRecipe(pickLlm(env), meta, transcript, frames);
+    const status = !recipe.is_recipe ? "failed" : haveMedia ? "ready" : recipe.needs_transcript ? "needs_transcript" : "ready";
+    const source = transcript?.trim() ? "transcript" : frames.length ? "frames" : "caption";
     await env.DB.prepare(
       `UPDATE recipes SET title = ?, cuisine = ?, category = ?, summary = ?, servings = ?, total_minutes = ?,
         ingredients = ?, steps = ?, tags = ?, confidence = ?, status = ?, source = ?, error = ?, updated_at = datetime('now') WHERE id = ?`,
@@ -251,8 +298,8 @@ async function processRecipe(env: Env, id: string, url: string, transcript: stri
         JSON.stringify(recipe.tags),
         recipe.confidence,
         status,
-        transcript ? "transcript" : "caption",
-        !recipe.is_recipe ? "Does not look like a recipe" : status === "needs_transcript" ? "Caption is thin; waiting for the audio transcript" : null,
+        source,
+        !recipe.is_recipe ? "Does not look like a recipe" : status === "needs_transcript" ? "Caption is thin; waiting for the video" : null,
         id,
       )
       .run();
@@ -264,10 +311,10 @@ async function processRecipe(env: Env, id: string, url: string, transcript: stri
 }
 
 /** Whisper (Workers AI) on base64 audio, then re-run Claude with the transcript. Returns transcript length. */
-async function transcribeAndExtract(env: Env, id: string, url: string, audioBase64: string): Promise<number> {
+async function transcribeAndExtract(env: Env, id: string, url: string, audioBase64: string | null, frames: string[]): Promise<number> {
   await env.DB.prepare("UPDATE recipes SET status = 'transcribing', updated_at = datetime('now') WHERE id = ?").bind(id).run();
-  let text: string;
-  try {
+  let text = "";
+  if (audioBase64) try {
     const out = (await env.AI.run("@cf/openai/whisper-large-v3-turbo", {
       audio: audioBase64,
       task: "transcribe",
@@ -280,14 +327,14 @@ async function transcribeAndExtract(env: Env, id: string, url: string, audioBase
     throw new Error(`whisper failed: ${String(e)}`);
   }
   await env.DB.prepare("UPDATE recipes SET transcript = ? WHERE id = ?").bind(text, id).run();
-  await processRecipe(env, id, url, text);
+  await processRecipe(env, id, url, text, frames);
   return text.length;
 }
 
 async function listenInCloud(env: Env, id: string, url: string): Promise<void> {
   try {
-    const audio = await downloadAudioInSandbox(env, id, url);
-    await transcribeAndExtract(env, id, url, audio);
+    const media = await downloadMediaInSandbox(env, id, url);
+    await transcribeAndExtract(env, id, url, media.audio, media.frames);
   } catch (e) {
     await env.DB.prepare("UPDATE recipes SET status = 'needs_transcript', error = ?, updated_at = datetime('now') WHERE id = ? AND transcript IS NULL")
       .bind(`cloud listen: ${String(e).slice(0, 400)}`, id)

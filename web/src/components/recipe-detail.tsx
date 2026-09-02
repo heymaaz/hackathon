@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import {
   RiCheckDoubleLine,
   RiDeleteBinLine,
@@ -7,13 +7,14 @@ import {
   RiHeadphoneLine,
   RiHeartFill,
   RiHeartLine,
+  RiImageLine,
   RiPlayFill,
   RiRefreshLine,
   RiStarFill,
   RiStarLine,
 } from "@remixicon/react"
 
-import { api, statusLabel, type Recipe } from "@/lib/api"
+import { api, sourceLabel, statusLabel, type Recipe } from "@/lib/api"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -45,8 +46,6 @@ export function RecipeDetail({
   onDeleted: (id: string) => void
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false)
-  const [note, setNote] = useState(r?.note ?? "")
-  useEffect(() => setNote(r?.note ?? ""), [r?.id, r?.note])
 
   async function patch(body: Record<string, unknown>) {
     if (!r) return
@@ -104,8 +103,8 @@ export function RecipeDetail({
                 <Badge variant={r.status === "ready" ? "secondary" : r.status === "failed" ? "destructive" : "secondary"}>{statusLabel[r.status]}</Badge>
                 {r.source && (
                   <Badge variant="secondary">
-                    {r.source === "transcript" ? <RiHeadphoneLine /> : <RiFileTextLine />}
-                    {r.source === "transcript" ? "from audio" : "from caption"}
+                    {r.source === "transcript" ? <RiHeadphoneLine /> : r.source === "frames" ? <RiImageLine /> : <RiFileTextLine />}
+                    {sourceLabel[r.source]}
                   </Badge>
                 )}
                 {r.confidence != null && <Badge variant="outline">{Math.round(r.confidence * 100)}% confident</Badge>}
@@ -150,7 +149,7 @@ export function RecipeDetail({
                 <RiCheckDoubleLine data-icon="inline-start" />
                 {r.cooked ? `Cooked by ${r.cooked_by === meId ? "you" : r.cooked_by_name}` : "Mark cooked"}
               </Button>
-              {!r.transcript && r.status !== "transcribing" && r.status !== "pending" && (
+              {r.transcript === null && r.status !== "transcribing" && r.status !== "pending" && (
                 <Button variant="secondary" size="sm" onClick={listen}>
                   <RiHeadphoneLine data-icon="inline-start" />
                   Listen to the video
@@ -212,12 +211,7 @@ export function RecipeDetail({
             <Separator />
             <section className="flex flex-col gap-2">
               <h3 className="font-heading text-sm font-semibold">Kitchen notes</h3>
-              <Textarea
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                onBlur={() => note !== (r.note ?? "") && patch({ note })}
-                placeholder="e.g. she loved this one — less chilli next time"
-              />
+              <NoteField key={r.id} initial={r.note ?? ""} onSave={(note) => patch({ note })} />
             </section>
 
             {(r.caption || r.transcript) && (
@@ -259,5 +253,18 @@ export function RecipeDetail({
         </DialogContent>
       </Dialog>
     </Sheet>
+  )
+}
+
+/** Keyed by recipe id so switching recipes resets the draft without an effect. */
+function NoteField({ initial, onSave }: { initial: string; onSave: (note: string) => void }) {
+  const [note, setNote] = useState(initial)
+  return (
+    <Textarea
+      value={note}
+      onChange={(e) => setNote(e.target.value)}
+      onBlur={() => note !== initial && onSave(note)}
+      placeholder="e.g. she loved this one — less chilli next time"
+    />
   )
 }

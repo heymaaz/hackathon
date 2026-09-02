@@ -1,3 +1,10 @@
-ANTHROPIC_API_KEY=sk-ant-...
-# Optional: lock write endpoints (UI will prompt for it once)
-# APP_KEY=change-me
+# Copy to .dev.vars for local dev. setup.sh uploads the non-empty values as Worker secrets.
+BETTER_AUTH_SECRET=        # openssl rand -base64 32
+BETTER_AUTH_URL=http://localhost:8787
+# One of these is required. LLM_PROVIDER picks which; default is openrouter when its key is set.
+OPENROUTER_API_KEY=
+ANTHROPIC_API_KEY=
+ANTHROPIC_WORKSPACE_ID=    # only for identity-linked Anthropic keys (wrkspc_...)
+LLM_PROVIDER=openrouter
+# Optional: lock sign-up behind a shared invite code for your household
+INVITE_CODE=

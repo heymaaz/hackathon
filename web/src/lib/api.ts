@@ -19,7 +19,7 @@ export interface Recipe {
   servings: string | null
   total_minutes: number | null
   status: Status
-  source: "caption" | "transcript" | null
+  source: "caption" | "transcript" | "frames" | null
   confidence: number | null
   saved_by: string | null
   saved_by_name: string | null
@@ -54,12 +54,12 @@ export interface Stats {
 export interface Member {
   id: string
   name: string
-  email: string
   image: string | null
 }
 export interface Me {
-  user: Member
+  user: Member & { email: string }
   members: Member[]
+  inviteRequired: boolean
 }
 export type Cuisine = { cuisine: string; n: number }
 
@@ -96,6 +96,8 @@ export function shelfQuery(shelf: Shelf, q: string): string {
   const s = p.toString()
   return s ? `?${s}` : ""
 }
+
+export const sourceLabel = { caption: "from caption", transcript: "from audio", frames: "from video frames" } as const
 
 export const statusLabel: Record<Status, string> = {
   pending: "extracting…",

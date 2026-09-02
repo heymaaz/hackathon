@@ -154,7 +154,7 @@ export const RecipeSchema = z.object({
 export type Recipe = z.infer<typeof RecipeSchema>;
 
 const SYSTEM = `You turn social-media cooking videos (TikTok, Instagram Reels, YouTube Shorts) into clean, cookable recipe cards.
-You are given the video's caption and, when available, a speech transcript. Extract faithfully: never invent quantities that are not stated or strongly implied, use null instead. Fix obvious transcription errors of ingredient names. Keep the creator's style of dish but write steps clearly. Ingredients in the order they are used. If quantities are missing for most ingredients and there is no transcript, set needs_transcript to true.`;
+You are given the video's caption and, when available, a speech transcript and a handful of still frames sampled from the video. Many creators put the ingredients and quantities as on-screen text rather than speech, so read the frames carefully. Extract faithfully: never invent quantities that are not stated or strongly implied, use null instead. Fix obvious transcription errors of ingredient names. Always write the card in English even if the speech or text is in another language, keeping dish and ingredient names (e.g. kasuri methi). Ingredients in the order they are used. Set needs_transcript to true only when the caption alone is too thin to cook from AND you were given neither a transcript nor frames.`;
 
 export interface LlmConfig {
   /** "openrouter" (default when OPENROUTER_API_KEY is set) or "anthropic" */
@@ -198,19 +198,32 @@ function languageModel(cfg: LlmConfig): LanguageModel {
   return createOpenRouter({ apiKey: cfg.openrouterApiKey })(slug);
 }
 
-export async function extractRecipe(cfg: LlmConfig, meta: Meta, transcript: string | null): Promise<Recipe> {
-  const parts = [
+/** `frames` are base64-encoded JPEGs sampled from the video (on-screen ingredient text lives there). */
+export async function extractRecipe(cfg: LlmConfig, meta: Meta, transcript: string | null, frames: string[] = []): Promise<Recipe> {
+  const text = [
     `Platform: ${meta.platform}`,
     meta.creator ? `Creator: ${meta.creator}` : null,
     meta.title && meta.title !== meta.caption ? `Title: ${meta.title}` : null,
     `Caption:\n${meta.caption ?? "(none)"}`,
-    transcript ? `Speech transcript (may be in any language; write the card in English):\n${transcript}` : "Speech transcript: (not available)",
-  ].filter(Boolean);
+    transcript === null
+      ? "Speech transcript: (not available)"
+      : transcript.trim()
+        ? `Speech transcript:\n${transcript}`
+        : "Speech transcript: (the video has no speech, only music)",
+    frames.length ? `${frames.length} frames sampled evenly from the video follow, in order.` : null,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   const { output } = await generateText({
     model: languageModel(cfg),
     system: SYSTEM,
     output: Output.object({ schema: RecipeSchema }),
-    prompt: parts.join("\n\n"),
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text }, ...frames.map((data) => ({ type: "file" as const, mediaType: "image/jpeg", data }))],
+      },
+    ],
     maxOutputTokens: 8000,
   });
   return output;
