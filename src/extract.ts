@@ -163,18 +163,35 @@ export interface LlmConfig {
   model: string;
   openrouterApiKey?: string;
   anthropicApiKey?: string;
+  /** Required by identity-linked Anthropic API keys (Console > Settings > Workspaces). */
+  anthropicWorkspaceId?: string;
 }
 
-export function pickLlm(env: { OPENROUTER_API_KEY?: string; ANTHROPIC_API_KEY?: string; LLM_PROVIDER?: string; CLAUDE_MODEL?: string }): LlmConfig {
+export function pickLlm(env: {
+  OPENROUTER_API_KEY?: string;
+  ANTHROPIC_API_KEY?: string;
+  ANTHROPIC_WORKSPACE_ID?: string;
+  LLM_PROVIDER?: string;
+  CLAUDE_MODEL?: string;
+}): LlmConfig {
   const provider =
     env.LLM_PROVIDER === "anthropic" || (!env.OPENROUTER_API_KEY && env.ANTHROPIC_API_KEY) ? "anthropic" : "openrouter";
-  return { provider, model: env.CLAUDE_MODEL ?? "claude-opus-5", openrouterApiKey: env.OPENROUTER_API_KEY, anthropicApiKey: env.ANTHROPIC_API_KEY };
+  return {
+    provider,
+    model: env.CLAUDE_MODEL ?? "claude-opus-5",
+    openrouterApiKey: env.OPENROUTER_API_KEY,
+    anthropicApiKey: env.ANTHROPIC_API_KEY,
+    anthropicWorkspaceId: env.ANTHROPIC_WORKSPACE_ID,
+  };
 }
 
 function languageModel(cfg: LlmConfig): LanguageModel {
   if (cfg.provider === "anthropic") {
     if (!cfg.anthropicApiKey) throw new Error("ANTHROPIC_API_KEY not set");
-    return createAnthropic({ apiKey: cfg.anthropicApiKey })(cfg.model);
+    return createAnthropic({
+      apiKey: cfg.anthropicApiKey,
+      headers: cfg.anthropicWorkspaceId ? { "anthropic-workspace-id": cfg.anthropicWorkspaceId } : undefined,
+    })(cfg.model);
   }
   if (!cfg.openrouterApiKey) throw new Error("OPENROUTER_API_KEY not set");
   const slug = cfg.model.includes("/") ? cfg.model : `anthropic/${cfg.model}`;
