@@ -12,8 +12,10 @@
     "runner": "bun scripts/runner.ts --watch",
     "migrate:local": "wrangler d1 migrations apply recipebox --local",
     "migrate": "wrangler d1 migrations apply recipebox --remote",
-    "build": "npm --prefix web run build",
-    "dev:web": "npm --prefix web run dev"
+    "build": "npm --prefix web ci && npm --prefix web run build",
+    "dev:web": "npm --prefix web run dev",
+    "deploy:containers": "npm --prefix web run build && wrangler deploy -c wrangler.containers.jsonc",
+    "types": "wrangler types -c wrangler.containers.jsonc"
   },
   "repository": {
     "type": "git",
