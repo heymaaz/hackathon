@@ -35,6 +35,7 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.48",
+    "@cloudflare/sandbox": "^0.12.9",
     "@openrouter/ai-sdk-provider": "^3.0.0",
     "ai": "^7.0.90",
     "better-auth": "^1.7.2",

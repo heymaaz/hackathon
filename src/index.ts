@@ -1,6 +1,9 @@
 import { Hono } from "hono";
 import { auth, type Session } from "./auth";
 import { extractRecipe, fetchMeta, normalizeUrl, pickLlm, type Meta } from "./extract";
+import { downloadAudioInSandbox } from "./sandbox";
+
+export { Sandbox } from "./sandbox";
 
 type Vars = { session: Session };
 const app = new Hono<{ Bindings: Env; Variables: Vars }>();
@@ -134,7 +137,7 @@ app.post("/api/recipes/:id/retry", async (c) => {
   return c.json({ ok: true });
 });
 
-/** Audio upload -> Workers AI Whisper -> re-extract with transcript. Body: raw audio bytes. */
+/** Audio upload -> Workers AI Whisper -> re-extract with transcript. Body: raw audio bytes (local yt-dlp runner). */
 app.post("/api/recipes/:id/audio", async (c) => {
   const id = c.req.param("id");
   const r = await c.env.DB.prepare("SELECT url FROM recipes WHERE id = ?").bind(id).first<{ url: string }>();
@@ -142,24 +145,32 @@ app.post("/api/recipes/:id/audio", async (c) => {
   const buf = await c.req.arrayBuffer();
   if (buf.byteLength < 1000) return c.json({ error: "audio too small" }, 400);
   if (buf.byteLength > 24 * 1024 * 1024) return c.json({ error: "audio too large (24MB max)" }, 413);
-
-  await c.env.DB.prepare("UPDATE recipes SET status = 'transcribing', updated_at = datetime('now') WHERE id = ?").bind(id).run();
-  let text: string;
   try {
-    const out = (await c.env.AI.run("@cf/openai/whisper-large-v3-turbo", {
-      audio: bytesToBase64(new Uint8Array(buf)),
-      task: "transcribe",
-      vad_filter: true,
-      initial_prompt: "A cooking video. Ingredients with quantities in grams, cups, tablespoons; cooking steps.",
-    })) as { text?: string };
-    text = (out.text ?? "").trim();
+    const chars = await transcribeAndExtract(c.env, id, r.url, bytesToBase64(new Uint8Array(buf)));
+    return c.json({ transcript_chars: chars, recipe: await getRecipe(c.env.DB, id) });
   } catch (e) {
-    await c.env.DB.prepare("UPDATE recipes SET status = 'needs_transcript', error = ? WHERE id = ?").bind(`whisper: ${String(e)}`, id).run();
-    return c.json({ error: `whisper failed: ${String(e)}` }, 502);
+    return c.json({ error: String(e) }, 502);
   }
-  await c.env.DB.prepare("UPDATE recipes SET transcript = ? WHERE id = ?").bind(text, id).run();
-  await processRecipe(c.env, id, r.url, text);
-  return c.json({ transcript_chars: text.length, recipe: await getRecipe(c.env.DB, id) });
+});
+
+/** Cloud path: yt-dlp inside a Cloudflare Sandbox container -> Whisper -> Claude. Runs in the background. */
+app.post("/api/recipes/:id/listen", async (c) => {
+  const id = c.req.param("id");
+  const r = await c.env.DB.prepare("SELECT url, status FROM recipes WHERE id = ?").bind(id).first<{ url: string; status: string }>();
+  if (!r) return c.json({ error: "not found" }, 404);
+  if (!(c.env as Partial<Env>).Sandbox) {
+    return c.json({ error: "Cloud listening is not enabled on this deployment (Containers need the Workers Paid plan). Run `bun scripts/runner.ts` instead." }, 501);
+  }
+  if (r.status === "transcribing") return c.json({ ok: true, already: true });
+  await c.env.DB.prepare("UPDATE recipes SET status = 'transcribing', error = NULL, updated_at = datetime('now') WHERE id = ?").bind(id).run();
+  c.executionCtx.waitUntil(listenInCloud(c.env, id, r.url));
+  return c.json({ ok: true }, 202);
+});
+
+/** Drain the audio queue through the Sandbox (also runs on the cron trigger). */
+app.post("/api/queue/run", async (c) => {
+  const n = await drainQueueInCloud(c.env, c.executionCtx, Number(c.req.query("limit") ?? 3));
+  return c.json({ started: n });
 });
 
 /** Recipes still waiting for audio (polled by the yt-dlp runner / Sandbox). Every recipe gets audio once. */
@@ -252,6 +263,52 @@ async function processRecipe(env: Env, id: string, url: string, transcript: stri
   }
 }
 
+/** Whisper (Workers AI) on base64 audio, then re-run Claude with the transcript. Returns transcript length. */
+async function transcribeAndExtract(env: Env, id: string, url: string, audioBase64: string): Promise<number> {
+  await env.DB.prepare("UPDATE recipes SET status = 'transcribing', updated_at = datetime('now') WHERE id = ?").bind(id).run();
+  let text: string;
+  try {
+    const out = (await env.AI.run("@cf/openai/whisper-large-v3-turbo", {
+      audio: audioBase64,
+      task: "transcribe",
+      vad_filter: true,
+      initial_prompt: "A cooking video. Ingredients with quantities in grams, cups, tablespoons; cooking steps.",
+    })) as { text?: string };
+    text = (out.text ?? "").trim();
+  } catch (e) {
+    await env.DB.prepare("UPDATE recipes SET status = 'needs_transcript', error = ? WHERE id = ?").bind(`whisper: ${String(e)}`, id).run();
+    throw new Error(`whisper failed: ${String(e)}`);
+  }
+  await env.DB.prepare("UPDATE recipes SET transcript = ? WHERE id = ?").bind(text, id).run();
+  await processRecipe(env, id, url, text);
+  return text.length;
+}
+
+async function listenInCloud(env: Env, id: string, url: string): Promise<void> {
+  try {
+    const audio = await downloadAudioInSandbox(env, id, url);
+    await transcribeAndExtract(env, id, url, audio);
+  } catch (e) {
+    await env.DB.prepare("UPDATE recipes SET status = 'needs_transcript', error = ?, updated_at = datetime('now') WHERE id = ? AND transcript IS NULL")
+      .bind(`cloud listen: ${String(e).slice(0, 400)}`, id)
+      .run();
+  }
+}
+
+async function drainQueueInCloud(env: Env, ctx: { waitUntil(p: Promise<unknown>): void }, limit: number): Promise<number> {
+  if (!(env as Partial<Env>).Sandbox) return 0; // deployed without the container binding
+  const { results } = await env.DB.prepare(
+    "SELECT id, url FROM recipes WHERE transcript IS NULL AND status IN ('needs_transcript','ready','failed') AND (error IS NULL OR error NOT LIKE 'cloud listen:%') ORDER BY created_at ASC LIMIT ?",
+  )
+    .bind(limit)
+    .all<{ id: string; url: string }>();
+  for (const r of results) {
+    await env.DB.prepare("UPDATE recipes SET status = 'transcribing', updated_at = datetime('now') WHERE id = ?").bind(r.id).run();
+    ctx.waitUntil(listenInCloud(env, r.id, r.url));
+  }
+  return results.length;
+}
+
 function bytesToBase64(bytes: Uint8Array): string {
   let bin = "";
   const chunk = 0x8000;
@@ -259,4 +316,9 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(bin);
 }
 
-export default app;
+export default {
+  fetch: app.fetch,
+  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(drainQueueInCloud(env, ctx, 3));
+  },
+};

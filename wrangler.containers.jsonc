@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  // Default config: no Sandbox container (Containers need the Workers Paid plan). Cloud yt-dlp lives in wrangler.containers.jsonc.
+  // Full config WITH the yt-dlp Sandbox container (Workers Paid plan). Deploy: npm run deploy:containers
   "name": "recipebox",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-01",
@@ -11,6 +11,9 @@
   "d1_databases": [
     { "binding": "DB", "database_name": "recipebox", "database_id": "63ee9bc0-0cc4-483d-b452-e3a387f51303", "migrations_dir": "migrations" }
   ],
+  "containers": [{ "class_name": "Sandbox", "image": "./Dockerfile", "instance_type": "lite", "max_instances": 1 }],
+  "durable_objects": { "bindings": [{ "class_name": "Sandbox", "name": "Sandbox" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Sandbox"] }],
   "triggers": { "crons": ["*/2 * * * *"] },
   "vars": { "CLAUDE_MODEL": "claude-opus-5" }
 }

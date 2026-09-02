@@ -56,6 +56,12 @@ export function RecipeDetail({
       toast.add({ type: "error", title: "Could not save", description: String((e as Error).message) })
     }
   }
+  async function listen() {
+    if (!r) return
+    await api(`/recipes/${r.id}/listen`, { method: "POST" })
+    onChange({ ...r, status: "transcribing" })
+    toast.add({ type: "loading", title: "Listening in the cloud…", description: "A Cloudflare Sandbox is pulling the audio; Whisper transcribes it next.", timeout: 4000 })
+  }
   async function retry() {
     if (!r) return
     await api(`/recipes/${r.id}/retry`, { method: "POST" })
@@ -144,6 +150,12 @@ export function RecipeDetail({
                 <RiCheckDoubleLine data-icon="inline-start" />
                 {r.cooked ? `Cooked by ${r.cooked_by === meId ? "you" : r.cooked_by_name}` : "Mark cooked"}
               </Button>
+              {!r.transcript && r.status !== "transcribing" && r.status !== "pending" && (
+                <Button variant="secondary" size="sm" onClick={listen}>
+                  <RiHeadphoneLine data-icon="inline-start" />
+                  Listen to the video
+                </Button>
+              )}
               {r.status !== "ready" && (
                 <Button variant="ghost" size="sm" onClick={retry}>
                   <RiRefreshLine data-icon="inline-start" />
