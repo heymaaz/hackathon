@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react"
-import { RiAddLine, RiHeartLine, RiSearchLine } from "@remixicon/react"
+import { RiAddLine, RiDownload2Line, RiHeartLine, RiSearchLine } from "@remixicon/react"
 
 import { api, ApiError, shelfQuery, type Cuisine, type Me, type Recipe, type Shelf, type Stats } from "@/lib/api"
 import { authClient } from "@/lib/auth-client"
@@ -118,14 +118,38 @@ function Kitchen({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
     }
   }
 
-  // Share-sheet / Shortcut deep link: /?add=<url>
-  useEffect(() => {
-    const add = new URLSearchParams(location.search).get("add")
-    if (add && urlRef.current) {
-      urlRef.current.value = add
-      history.replaceState({}, "", "/")
-      urlRef.current.form?.requestSubmit()
+  /** "Keep the video": queue the original file for the laptop runner, no recipe extraction. */
+  async function keepVideo(url: string) {
+    if (!url) return
+    try {
+      const res = await api<{ id: string; duplicate?: boolean; status: string; filename?: string }>("/api/keep", { method: "POST", body: JSON.stringify({ url }) })
+      if (urlRef.current) urlRef.current.value = ""
+      toast.add({
+        type: res.duplicate ? "info" : "success",
+        title: res.duplicate ? (res.status === "done" ? `Already kept: ${res.filename}` : "Already queued") : "Queued for download",
+        description: res.duplicate ? undefined : "The runner on the laptop saves the original into Documents/ytp-dlp-downloaded.",
+      })
+    } catch (err) {
+      toast.add({ type: "error", title: "Could not queue that video", description: (err as Error).message })
     }
+  }
+
+  // Share-sheet / Shortcut deep links: /?add=<url> saves a recipe, /?keep=<url> just keeps the video file
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    const add = params.get("add")
+    const keep = params.get("keep")
+    if ((add || keep) && urlRef.current) {
+      history.replaceState({}, "", "/")
+      if (keep) {
+        urlRef.current.value = keep
+        void keepVideo(keep)
+      } else if (add) {
+        urlRef.current.value = add
+        urlRef.current.form?.requestSubmit()
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const title =
@@ -155,6 +179,10 @@ function Kitchen({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
                 <Toggle pressed={asRequest} onPressedChange={setAsRequest} size="sm" aria-label="Ask someone to cook this for me" title="Please cook this for me">
                   <RiHeartLine />
                 </Toggle>
+                <InputGroupButton type="button" variant="ghost" title="Keep the original video file on the laptop (no recipe)" onClick={() => keepVideo(urlRef.current?.value.trim() ?? "")}>
+                  <RiDownload2Line />
+                  Keep
+                </InputGroupButton>
                 <InputGroupButton type="submit" variant="default" disabled={saving}>
                   {saving && <Spinner data-icon="inline-start" />}
                   Save

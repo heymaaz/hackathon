@@ -8,16 +8,20 @@
  *   bun scripts/runner.ts --watch        # poll every 15s (leave running during the demo)
  *   bun scripts/runner.ts <url> [...]    # save these links AND process them right away
  *
+ * It also drains the "keep" queue: videos queued via POST /api/keep (or the Keep button) are downloaded in full
+ * to KEEP_DIR (default ~/Documents/ytp-dlp-downloaded) and nothing else happens to them.
+ *
  * Env (.env is loaded by Bun): RECIPEBOX_URL, RECIPEBOX_EMAIL, RECIPEBOX_PASSWORD
  */
 import { $ } from "bun";
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { signIn } from "./auth";
 
 const BASE = (process.env.RECIPEBOX_URL ?? "http://localhost:8787").replace(/\/$/, "");
 const MAX_FRAMES = 10;
+const KEEP_DIR = process.env.KEEP_DIR ?? join(homedir(), "Documents", "ytp-dlp-downloaded");
 const headers: Record<string, string> = await signIn(BASE);
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -70,6 +74,26 @@ async function handle(id: string, url: string, title?: string | null) {
   console.log(` ✓ ${res.transcript_chars} chars -> ${res.recipe.title} [${res.recipe.cuisine}] ${res.recipe.status} (${res.recipe.source})`);
 }
 
+/** Download the original video (best quality, mp4) into KEEP_DIR. */
+async function keep(id: string, url: string) {
+  mkdirSync(KEEP_DIR, { recursive: true });
+  process.stdout.write(`💾 ${id} ${url.slice(0, 70)} … downloading to ${KEEP_DIR}`);
+  const template = join(KEEP_DIR, "%(uploader,channel,creator)s - %(title).80B [%(id)s].%(ext)s");
+  try {
+    const out = await $`yt-dlp --no-warnings --no-playlist --js-runtimes node -f "bv*+ba/b" --merge-output-format mp4 --print after_move:filepath --print title -o ${template} ${url}`.quiet().text();
+    const lines = out.trim().split("\n");
+    const filepath = lines.find((l) => l.startsWith("/")) ?? lines.at(-1) ?? "";
+    const title = lines.find((l) => !l.startsWith("/")) ?? null;
+    const bytes = existsSync(filepath) ? statSync(filepath).size : null;
+    await api(`/api/keep/${id}/done`, { method: "POST", body: JSON.stringify({ filename: filepath.split("/").pop(), bytes, title }), headers: { "content-type": "application/json" } });
+    console.log(` ✓ ${(Number(bytes) / 1048576).toFixed(1)} MB → ${filepath.split("/").pop()}`);
+  } catch (e) {
+    const msg = String(e).split("\n")[0].slice(0, 300);
+    await api(`/api/keep/${id}/done`, { method: "POST", body: JSON.stringify({ error: msg }), headers: { "content-type": "application/json" } });
+    console.log(` ✗ ${msg}`);
+  }
+}
+
 async function drain() {
   const queue = await api<{ id: string; url: string; title: string | null }[]>("/api/queue");
   for (const item of queue) {
@@ -79,7 +103,9 @@ async function drain() {
       console.log(` ✗ ${String(e).split("\n")[0]}`);
     }
   }
-  return queue.length;
+  const keeps = await api<{ id: string; url: string }[]>("/api/keep/queue");
+  for (const k of keeps) await keep(k.id, k.url);
+  return queue.length + keeps.length;
 }
 
 const args = process.argv.slice(2);

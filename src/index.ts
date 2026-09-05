@@ -259,6 +259,53 @@ app.delete("/api/recipes/:id", async (c) => {
   return c.json({ ok: true });
 });
 
+// ---------- keeps: "just save the video file to my laptop" ----------
+/** Queue a video for the local runner to download in full to KEEP_DIR (default ~/Documents/ytp-dlp-downloaded). */
+app.post("/api/keep", async (c) => {
+  const body = await c.req.json<{ url?: string }>().catch(() => ({}) as { url?: string });
+  if (!body.url) return c.json({ error: "url required" }, 400);
+  let url: string;
+  try {
+    url = await normalizeUrl(body.url);
+  } catch {
+    return c.json({ error: "invalid url" }, 400);
+  }
+  const existing = await c.env.DB.prepare("SELECT * FROM keeps WHERE url = ?").bind(url).first();
+  if (existing) return c.json({ ...existing, duplicate: true });
+  const id = crypto.randomUUID().slice(0, 8);
+  const platform = new URL(url).hostname.replace(/^www\./, "").split(".").slice(-2, -1)[0];
+  await c.env.DB.prepare("INSERT INTO keeps (id, url, platform, requested_by) VALUES (?, ?, ?, ?)").bind(id, url, platform, c.get("session").user.id).run();
+  return c.json({ id, url, status: "pending" }, 202);
+});
+
+app.get("/api/keep", async (c) => {
+  const { results } = await c.env.DB.prepare(
+    'SELECT k.*, u.name AS requested_by_name FROM keeps k LEFT JOIN "user" u ON u.id = k.requested_by ORDER BY k.created_at DESC LIMIT 200',
+  ).all();
+  return c.json(results);
+});
+
+/** Polled by the runner. Claims the rows it returns so two runners do not fight. */
+app.get("/api/keep/queue", async (c) => {
+  const { results } = await c.env.DB.prepare("SELECT id, url FROM keeps WHERE status = 'pending' ORDER BY created_at ASC LIMIT 20").all<{ id: string; url: string }>();
+  for (const k of results) await c.env.DB.prepare("UPDATE keeps SET status = 'downloading', updated_at = datetime('now') WHERE id = ?").bind(k.id).run();
+  return c.json(results);
+});
+
+app.post("/api/keep/:id/done", async (c) => {
+  const body = await c.req.json<{ filename?: string; bytes?: number; title?: string; error?: string }>().catch(() => ({}) as Record<string, never>);
+  const ok = !body.error;
+  await c.env.DB.prepare("UPDATE keeps SET status = ?, filename = ?, bytes = ?, title = COALESCE(?, title), error = ?, updated_at = datetime('now') WHERE id = ?")
+    .bind(ok ? "done" : "failed", body.filename ?? null, body.bytes ?? null, body.title ?? null, body.error?.slice(0, 300) ?? null, c.req.param("id"))
+    .run();
+  return c.json({ ok: true });
+});
+
+app.delete("/api/keep/:id", async (c) => {
+  await c.env.DB.prepare("DELETE FROM keeps WHERE id = ?").bind(c.req.param("id")).run();
+  return c.json({ ok: true });
+});
+
 // ---------- pipeline ----------
 async function processRecipe(env: Env, id: string, url: string, transcript: string | null, frames: string[] = []): Promise<void> {
   try {

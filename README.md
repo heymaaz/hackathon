@@ -95,7 +95,16 @@ bun scripts/runner.ts --watch   # keep pulling media for anything that needs it
 | POST | `/api/recipes/:id/listen` | cloud path via Sandbox (containers deploy only) |
 | POST | `/api/recipes/:id/retry` | re-run extraction |
 | GET | `/api/queue` | recipes still waiting for media |
+| POST | `/api/keep` | `{url}` → queue the original video for download to the laptop |
+| GET | `/api/keep`, `/api/keep/queue` | list kept videos; runner claims pending ones |
+| POST | `/api/keep/:id/done` | runner reports `{filename, bytes}` or `{error}` |
 | GET | `/api/me`, `/api/cuisines`, `/api/stats` | sidebar data |
+
+## Keep the video file (no recipe)
+
+Sometimes you just want the video. Paste a link and press **Keep** (or share to `/?keep=<url>`, or `POST /api/keep {url}`).
+The runner downloads the original at best quality into `~/Documents/ytp-dlp-downloaded/` (override with `KEEP_DIR`)
+and records the filename. Nothing is transcribed or extracted. `GET /api/keep` lists what has been kept.
 
 ## iOS share sheet
 
