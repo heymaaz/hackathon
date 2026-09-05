@@ -122,7 +122,7 @@ function Kitchen({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
   async function keepVideo(url: string) {
     if (!url) return
     try {
-      const res = await api<{ id: string; duplicate?: boolean; status: string; filename?: string }>("/api/keep", { method: "POST", body: JSON.stringify({ url }) })
+      const res = await api<{ id: string; duplicate?: boolean; status: string; filename?: string }>("/keep", { method: "POST", body: JSON.stringify({ url }) })
       if (urlRef.current) urlRef.current.value = ""
       toast.add({
         type: res.duplicate ? "info" : "success",
