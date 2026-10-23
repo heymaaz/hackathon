@@ -1,0 +1,9 @@
+{
+  "name": "recipe cloudflare",
+  "mode": "managed",
+  "dependencies": {
+    "tessl-labs/factory-setup": {
+      "version": "0.14.1"
+    }
+  }
+}
