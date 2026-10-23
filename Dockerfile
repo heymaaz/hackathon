@@ -1,6 +1,6 @@
 # Cloudflare Sandbox image with yt-dlp + ffmpeg for pulling recipe-video audio in the cloud.
 # Tag must match the @cloudflare/sandbox npm version.
-FROM docker.io/cloudflare/sandbox:0.12.9-python
+FROM docker.io/cloudflare/sandbox:0.12.14-python
 
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg nodejs ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \

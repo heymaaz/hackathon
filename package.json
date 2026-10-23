@@ -32,19 +32,19 @@
   "homepage": "https://github.com/heymaaz/hackathon#readme",
   "private": "true",
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260902.1",
-    "@types/bun": "^1.4.0",
+    "@cloudflare/workers-types": "^5.20261023.1",
+    "@types/bun": "^1.4.4",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.11",
-    "wrangler": "^4.128.0"
+    "vitest": "^4.1.12",
+    "wrangler": "^4.152.0"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^4.0.48",
-    "@cloudflare/sandbox": "^0.12.9",
-    "@openrouter/ai-sdk-provider": "^3.0.0",
-    "ai": "^7.0.90",
-    "better-auth": "^1.7.2",
-    "hono": "^4.13.5",
-    "zod": "^4.5.4"
+    "@ai-sdk/anthropic": "^4.0.87",
+    "@cloudflare/sandbox": "^0.12.14",
+    "@openrouter/ai-sdk-provider": "^3.1.0",
+    "ai": "^7.0.150",
+    "better-auth": "^1.7.12",
+    "hono": "^4.13.13",
+    "zod": "^4.6.7"
   }
 }
