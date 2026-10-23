@@ -2,7 +2,8 @@
 set -eo pipefail
 
 echo "Installing root dependencies from package-lock.json"
-CI=true npm ci
+# Skip the CI-only prepare build; keep dependency lifecycle scripts enabled.
+CI= npm ci
 
 echo "Installing web dependencies from web/package-lock.json"
 CI=true npm --prefix web ci
