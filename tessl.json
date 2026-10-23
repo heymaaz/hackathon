@@ -1,5 +1,5 @@
 {
-  "name": "recipe cloudflare",
+  "name": "ws-01a168768a2c719d91d39a4e6d34cd92/hackathon",
   "mode": "managed",
   "dependencies": {
     "tessl-labs/factory-setup": {
